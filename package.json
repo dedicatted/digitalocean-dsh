@@ -1,0 +1,15 @@
+{
+  "name": "docker-shell-do",
+  "version": "0.0.0",
+  "description": "Docker Shell DigitalOcean installer",
+  "scripts": {
+    "boot": "node bootstrap.js"
+  },
+  "config": {
+    "myPort": "8080"
+  },
+  "dependencies": {
+    "commander": "^2.9.0",
+    "do-wrapper": "^3.3.3"
+  }
+}
