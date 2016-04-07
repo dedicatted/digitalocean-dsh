@@ -5,6 +5,9 @@
   "scripts": {
     "boot": "node bootstrap.js"
   },
+  "bin": {
+    "do-dsh": "./bootstrap.js"
+  },
   "config": {
     "myPort": "8080"
   },
