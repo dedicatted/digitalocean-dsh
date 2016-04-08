@@ -17,10 +17,13 @@ program
     .version(process.env.npm_package_version)
     .option('--name [droplet-name]', 'Droplet Name - Default dsh')
     .option('--api-key [api-key]', 'Digital Ocean Secret key')
-    .option('--region [api-key]', 'region [fra1, nyc1-3]')
+    .option('--region [region]', 'region [fra1, nyc1-3]')
+    .option('--root-key-name [root-key-name]', 'Name for ssh key installed on DigitalOcean for root access')
     .option('--public-key [public-key]', 'SSH Public Key')
     .option('--public-key-file [public-key-file]', 'Path to SSH Public Key File')
+    .option('drop', 'just delete droplet, skip new one creation')
     .parse(process.argv);
+
 
 
 keysConfig = {
@@ -42,26 +45,35 @@ keysConfig = {
 var id = 0;
 var ip;
 var api;
-var dropletName, publicKey, userData;
+var dropletName, publicKey, userData, rootKeyId;
+
 
 Step(
-
     function step1() {
         parseArgumentsAndCreateUserData(this)
     },
     function step2(err) {
         if (err) throw err;
-        checkIfDropletExists(this)
+        if(!program.drop)
+            findRootSSHKey(this);
+        else return 0;
     },
     function step3(err) {
         if (err) throw err;
-        createAndInitDroplet(this)
+        checkIfDropletExists(this)
+    },
+    function step4(err) {
+        if (err) throw err;
+        if(!program.drop)
+            createAndInitDroplet(this)
+        else return;
     },
     function printErrors(err) {
         if(err instanceof UserMessageError) {
             console.log(err.message)
-        }
+        } else throw err;
     }
+
 );
 
 function parseArgumentsAndCreateUserData(nextStep) {
@@ -71,40 +83,71 @@ function parseArgumentsAndCreateUserData(nextStep) {
 
             if (!program.apiKey)
                 throw new UserMessageError('--api-key required');
-
-            if (!program.region)
-                throw new UserMessageError('--region required');
-
-            if (!program.publicKey && !program.publicKeyFile)
-                throw new UserMessageError('--public-key or --public-key-file required');
-
-            if (program.publicKey && program.publicKeyFile)
-                throw new UserMessageError('specify ONLY one of --public-key or --public-key-file');
-
             api = new DigitalOcean(program.apiKey, 10);
 
-            if(program.publicKey) {
-                publicKey = program.publicKey;
-                return publicKey;
+
+            if(!program.drop) {
+
+                if (!program.region)
+                    throw new UserMessageError('--region required');
+
+                if (!program.publicKey && !program.publicKeyFile)
+                    throw new UserMessageError('--public-key or --public-key-file required');
+
+                if (!program.rootKeyName)
+                    throw new UserMessageError('--root-key-name required');
+
+                if (program.publicKey && program.publicKeyFile)
+                    throw new UserMessageError('specify ONLY one of --public-key or --public-key-file');
+
+                if (program.publicKey) {
+                    publicKey = program.publicKey;
+                    return publicKey;
+                } else {
+                    fs.readFile(program.publicKeyFile, 'utf8', function (err, data) {
+                        if (err) throw err;
+                        publicKey = data;
+                    });
+                }
             } else {
-                fs.readFile(program.publicKeyFile, 'utf8',  function (err,data) {
-                    if (err) throw err;
-                    publicKey = data;
-                });
+                return null;
             }
         },
         function readUserDataTemplate(err) {
-            if (err) throw err;
-            fs.readFile(__dirname + '/userdata.sh', 'utf8', this);
 
+            if (err) throw err;
+            if(!program.drop)
+                fs.readFile(__dirname + '/userdata.sh', 'utf8', this);
+            else return null
         },
         function done (err,data) {
             if (err) throw err;
-            userData = data.replace('$SSH_PUBLIC_KEY', publicKey);
+            if(!program.drop)
+                userData = data.replace('$SSH_PUBLIC_KEY', publicKey);
             nextStep();
         }
     );
 }
+
+
+function findRootSSHKey(nextStep) {
+    Step(
+        function getKeys() {
+            api.accountGetKeys({}, this);
+        },
+        function findKey(err, result, body) {
+            if(err) throw err;
+            for (var i = 0; i < body.ssh_keys.length; i++) {
+                if (body.ssh_keys[i].name.toUpperCase() === program.rootKeyName.toUpperCase()) {
+                    rootKeyId = body.ssh_keys[i].id;
+                    return nextStep();
+                }
+            }
+            throw new UserMessageError(util.format("SSH key '%s' could not be found in Digital Ocean", program.rootKeyName));
+        }
+    );
+}
+
 
 function checkIfDropletExists(nextStep) {
     Step(
@@ -112,10 +155,7 @@ function checkIfDropletExists(nextStep) {
             api.dropletsGetAll({}, this);
         },
         function checkIfExists(err, res, body) {
-            if (err) {
-                console.log("Can't get list of domain " + err);
-                throw err;
-            } else {
+            if (err) throw err;
                 for (var i = 0; i < body.droplets.length; i++) {
                     if (body.droplets[i].name.toUpperCase() === dropletName.toUpperCase()) {
                         id = body.droplets[i].id;
@@ -123,28 +163,34 @@ function checkIfDropletExists(nextStep) {
                     }
                 }
                 return false
-            }
         },
         function proposeToDrop(err, exists) {
+            if(err) throw err;
             if(exists) {
-                prompt.start();
-                const desription = util.format('Droplet with name \'%s\' already exists, would you like to delete it? (yes|no)', dropletName);
+                if(!program.drop) {
+                    prompt.start();
+                    const desription = util.format('Droplet with name \'%s\' already exists, would you like to delete it? (yes|no)', dropletName);
 
-                var schema = {
-                    properties: {
-                        delete: {
-                            description: desription,
-                            message: "Please write 'yes' or 'no'",
-                            required: true,
-                            conform: function (value) {
-                                return value === 'yes' || value === 'no';
-                            },
-                            before: function(value) { return  value === 'yes'; }
+                    var schema = {
+                        properties: {
+                            delete: {
+                                description: desription,
+                                message: "Please write 'yes' or 'no'",
+                                required: true,
+                                conform: function (value) {
+                                    return value === 'yes' || value === 'no';
+                                },
+                                before: function (value) {
+                                    return value === 'yes';
+                                }
+                            }
                         }
-                    }
-                };
+                    };
 
-                prompt.get(schema, this);
+                    prompt.get(schema, this);
+                } else {
+                    return {delete: true}
+                }
             } else {
                 return {dropletNotExists: true};
             }
@@ -153,7 +199,10 @@ function checkIfDropletExists(nextStep) {
             if(err) throw err;
             prompt.stop();
             if(result.dropletNotExists) {
-                return null;
+                if(!program.drop)
+                    return null;
+                else
+                    throw new UserMessageError(util.format('Droplet with name \'%s\' does not exists', dropletName));
             } else if (result.delete) {
                 console.log('Removing droplet with id [%s]', id);
                 api.dropletsDelete(id, this);
@@ -163,11 +212,9 @@ function checkIfDropletExists(nextStep) {
             }
         },
         function checkSuccess(err, result) {
-            if(err) {
-                console.log('Failed to remove droplet with id [%s]', id);
-                throw err;
-            }
+            if(err) throw err;
             if(result) {
+                // if result not empty means we actually did call to server to delete droplet
                 console.log("Droplet removed")
             }
             return nextStep();
@@ -183,7 +230,7 @@ function createAndInitDroplet(nextStep) {
                 "region": program.region,
                 "size": "512mb",
                 "image": "ubuntu-14-04-x64",
-                "ssh_keys": [1747755],
+                "ssh_keys": [rootKeyId],
                 "backups": false,
                 "ipv6": false,
                 "user_data": userData,
