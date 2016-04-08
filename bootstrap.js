@@ -69,12 +69,17 @@ function parseArgumentsAndCreateUserData(nextStep) {
         function readCommandLine() {
             dropletName = (program.dropletName) ? rogram.dropletName : 'andriy';
 
-            if (!program.apiKey) throw new UserMessageError('--api-key required');
+            if (!program.apiKey)
+                throw new UserMessageError('--api-key required');
 
-            if (!program.region) throw new UserMessageError('--region required');
+            if (!program.region)
+                throw new UserMessageError('--region required');
 
-            if (!program.publicKey && !program.publicKeyFile) throw new UserMessageError('--public-key or --public-key-file required')
-            if (program.publicKey && !program.publicKeyFile) throw new UserMessageError('specify ONLY one of --public-key or --public-key-file')
+            if (!program.publicKey && !program.publicKeyFile)
+                throw new UserMessageError('--public-key or --public-key-file required');
+
+            if (program.publicKey && program.publicKeyFile)
+                throw new UserMessageError('specify ONLY one of --public-key or --public-key-file');
 
             api = new DigitalOcean(program.apiKey, 10);
 
@@ -123,7 +128,7 @@ function checkIfDropletExists(nextStep) {
         function proposeToDrop(err, exists) {
             if(exists) {
                 prompt.start();
-                const desription = util.format('Droplet with name \'%s\' already exists, would you like to delete it? (yes|no)', dropletName)
+                const desription = util.format('Droplet with name \'%s\' already exists, would you like to delete it? (yes|no)', dropletName);
 
                 var schema = {
                     properties: {
@@ -137,7 +142,7 @@ function checkIfDropletExists(nextStep) {
                             before: function(value) { return  value === 'yes'; }
                         }
                     }
-                }
+                };
 
                 prompt.get(schema, this);
             } else {
@@ -157,7 +162,7 @@ function checkIfDropletExists(nextStep) {
                 process.exit(1);
             }
         },
-        function checkSuccess(err, result, body) {
+        function checkSuccess(err, result) {
             if(err) {
                 console.log('Failed to remove droplet with id [%s]', id);
                 throw err;
@@ -198,8 +203,8 @@ function createAndInitDroplet(nextStep) {
         function getIP(err, res, body) {
             if(err) throw err;
             ip = body.droplet.networks.v4[0].ip_address;
-            console.log('')
-            console.log('Done')
+            console.log('');
+            console.log('Done');
             console.log('Droplet id [%s], name [%s], ip [%s]', id, dropletName, ip);
             console.log('ssh dsh@%s', ip);
             nextStep();
