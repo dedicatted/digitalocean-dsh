@@ -7,7 +7,9 @@ const program = require('commander'),
     prompt = require('prompt'),
     colors = require("colors/safe"),
     fs = require('fs'),
-    UserMessageError = require('./user-message-error.js');
+    UserMessageError = require('./user-message-error.js'),
+    userhome = require('userhome'),
+    propertiesParser = require ("properties");
 
 prompt.message = colors.rainbow('');
 prompt.delimiter = colors.green('');
@@ -15,7 +17,8 @@ prompt.delimiter = colors.green('');
 
 program
     .version(process.env.npm_package_version)
-    .option('--name [droplet-name]', 'Droplet Name - Default dsh')
+    .option('--droplet-name [droplet-name]', 'Droplet Name - Default dsh')
+    .option('--droplet-size [droplet-size]', 'Droplet size 512mb, 1gb etc')
     .option('--api-key [api-key]', 'Digital Ocean Secret key')
     .option('--region [region]', 'region [fra1, nyc1-3]')
     .option('--root-key-name [root-key-name]', 'Name for ssh key installed on DigitalOcean for root access')
@@ -25,20 +28,6 @@ program
     .parse(process.argv);
 
 
-
-keysConfig = {
-    name: "andriy",
-    public_key: program.publicKey
-};
-
-/*api.accountAddKey(keysConfig, function (err, res, body) {
- console.log(body);
- });*/
-
-
-/*api.accountGetKeys({}, function (err, res, body) {
- console.log(body);
- });*/
 
 
 
@@ -73,20 +62,51 @@ Step(
             console.log(err.message)
         } else throw err;
     }
-
 );
 
 function parseArgumentsAndCreateUserData(nextStep) {
     Step(
-        function readCommandLine() {
-            dropletName = (program.dropletName) ? rogram.dropletName : 'andriy';
+        function readProperties() {
+            const configFile = userhome('.do-dsh');
+            if(fs.existsSync(configFile)) {
+                console.log("~/.do-dsh file found");
+                propertiesParser.parse (configFile, { path: true }, this);
+            }
+        },
+        function readCommandLine(err, properties) {
+            if (err) throw err;
 
+            var propNames = null;
+            if(properties) {
+                var oldNames = Object.keys(properties);
+                propNames = Object.keys(properties).map(function (str) {
+                    return str.replace(/-([a-z])/g, function (g) {
+                        return g[1].toUpperCase();
+                    })
+                });
+
+                for (var i = 0; i < propNames.length; i++) {
+                    var propName = propNames[i];
+                    if(!program[propName]) {
+                        program[propName] = properties[oldNames[i]];
+                    }
+                }
+            }
+
+            if (!program.dropletName)
+                throw new UserMessageError('--droplet-name required');
+
+            dropletName = program.dropletName;
+            console.log("Droplet " + dropletName);
             if (!program.apiKey)
                 throw new UserMessageError('--api-key required');
             api = new DigitalOcean(program.apiKey, 10);
 
 
             if(!program.drop) {
+
+                if (!program.dropletSize)
+                    throw new UserMessageError('--size required');
 
                 if (!program.region)
                     throw new UserMessageError('--region required');
@@ -226,9 +246,9 @@ function createAndInitDroplet(nextStep) {
     Step(
         function createDroplet() {
             var createDropletConfig = {
-                "name": "andriy",
+                "name": program.dropletName,
                 "region": program.region,
-                "size": "512mb",
+                "size": program.dropletSize,
                 "image": "ubuntu-14-04-x64",
                 "ssh_keys": [rootKeyId],
                 "backups": false,
@@ -236,6 +256,7 @@ function createAndInitDroplet(nextStep) {
                 "user_data": userData,
                 "private_networking": null
             };
+            console.log(util.inspect(createDropletConfig))
             api.dropletsCreate(createDropletConfig, this);
         },
         function requestDropletIP(err, res, body) {
@@ -245,6 +266,7 @@ function createAndInitDroplet(nextStep) {
             setTimeout(this, 2000);
         },
         function dropletGetById() {
+            console.log("Id is", id);
             api.dropletsGetById(id, this);
         },
         function getIP(err, res, body) {
